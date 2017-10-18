@@ -8,10 +8,15 @@ extern crate quick_error;
 extern crate serde_derive;
 extern crate indicatif;
 extern crate scoped_pool;
+#[macro_use]
+extern crate clap;
+
 
 
 use hyper::header::{Authorization, Bearer};
 use indicatif::ProgressBar;
+use clap::{Arg, App};
+
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
@@ -40,13 +45,32 @@ quick_error! {
 
 
 fn run() -> Result<(), Error> {
+    let matches = App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!("\n"))
+        .about(crate_description!())
+        .arg(Arg::with_name("BASE")
+            .required(true)
+            .index(1))
+        .arg(Arg::with_name("HEAD")
+            .required(true)
+            .index(2))
+        .arg(Arg::with_name("TOKEN")
+            .required(false)
+            .index(3))
+        .get_matches();
+
+    let base_branch = matches.value_of("BASE").unwrap();
+    let head_branch = matches.value_of("HEAD").unwrap();
+    let bearer_token = matches.value_of("TOKEN");
+
     let repo = git2::Repository::open_from_env()?;
 
     println!("Finding commits...");
 
     let mut walker = repo.revwalk()?;
-    walker.push_ref("refs/remotes/origin/develop")?;
-    walker.hide_ref("refs/remotes/origin/release-v0.23.0")?;
+    walker.push_ref(head_branch)?;
+    walker.hide_ref(base_branch)?;
 
     let re = regex::Regex::new(r"#(\d+)").expect("invalid regex");
 
@@ -71,9 +95,6 @@ fn run() -> Result<(), Error> {
     let mut client = reqwest::Client::new().unwrap();
     client.gzip(true);
 
-    let bearer = Bearer { token: "ef66865d70e6cc2500b958f521092f0e3db02753".to_owned() };
-    let auth_header = Authorization(bearer);
-
     let pool = scoped_pool::Pool::new(4);
 
     let issues = Vec::with_capacity(merged_pull_requests.len());
@@ -84,17 +105,23 @@ fn run() -> Result<(), Error> {
             let issues_cloned = arced_issues.clone();
             let pb_cloned = pb.clone();
             let client_cloned = client.clone();
-            let auth_cloned = auth_header.clone();
             scope.execute(
                 move || {
                     let url = format!(
                         "https://api.github.com/repos/matrix-org/synapse/issues/{}",
                         pr
                     );
-                    let mut resp = client_cloned
-                        .get(&url)
-                        .header(auth_cloned)
-                        .send()
+
+                    let req = client_cloned.get(&url);
+                    let req = if let Some(token) = bearer_token {
+                        let bearer = Bearer { token: token.to_owned() };
+                        let auth_header = Authorization(bearer);
+                        req.header(auth_header)
+                    } else {
+                        req
+                    };
+
+                    let mut resp = req.send()
                         .expect("failed to get issue from github");
 
                     if !resp.status().is_success() {
@@ -118,10 +145,15 @@ fn run() -> Result<(), Error> {
         .into_inner()
         .unwrap();
 
-    let mut resp = client
-        .get("https://api.github.com/teams/957027/members")
-        .header(auth_header.clone())
-        .send()?;
+    let req = client.get("https://api.github.com/orgs/matrix-org/members");
+    let req = if let Some(token) = bearer_token {
+        let bearer = Bearer { token: token.to_owned() };
+        let auth_header = Authorization(bearer);
+        req.header(auth_header)
+    } else {
+        req
+    };
+    let mut resp = req.send()?;
 
     if !resp.status().is_success() {
         return Err(format!("HTTP Error: {}", resp.status()).into());

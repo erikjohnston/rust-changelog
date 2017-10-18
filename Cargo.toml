@@ -4,6 +4,7 @@ name = "rust-changelog"
 version = "0.1.0"
 
 [dependencies]
+clap = "2.26.2"
 git2 = "0.6.4"
 hyper = "0.10.9"
 indicatif = "0.3.3"
