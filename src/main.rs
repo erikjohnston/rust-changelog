@@ -46,9 +46,9 @@ fn run() -> Result<(), Error> {
 
     let mut walker = repo.revwalk()?;
     walker.push_ref("refs/remotes/origin/develop")?;
-    walker.hide_ref("refs/remotes/origin/master")?;
+    walker.hide_ref("refs/remotes/origin/release-v0.23.0")?;
 
-    let re = regex::Regex::new(r"Merge pull request #(\d+) from").expect("invalid regex");
+    let re = regex::Regex::new(r"#(\d+)").expect("invalid regex");
 
     let merged_pull_requests: Vec<_> = walker
         .into_iter()
@@ -113,7 +113,7 @@ fn run() -> Result<(), Error> {
 
     pb.lock().unwrap().finish();
 
-    let issues = Arc::try_unwrap(arced_issues)
+    let mut issues = Arc::try_unwrap(arced_issues)
         .unwrap()
         .into_inner()
         .unwrap();
@@ -139,6 +139,7 @@ fn run() -> Result<(), Error> {
     let mut docs = Vec::new();
     let mut unknown = Vec::new();
 
+    issues.sort_by_key(|issue| issue.number);
 
     for issue in issues {
         let entry = if org_members.contains(&issue.user.login) {
